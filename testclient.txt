@@ -1,0 +1,147 @@
+import java.io.IOException;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Random;
+
+public class Client {
+    static int PACKETSIZE = 512;
+    static int SEQUENCE = 1;
+    static int CHECKSUM = 3;
+    static int HEADER = SEQUENCE + CHECKSUM;
+    static int DATASIZE = PACKETSIZE - HEADER;
+
+    public static void main(String args[]) throws IOException {
+        String message = "GET TestFile.html HTTP/1.0";
+
+        System.out.println("Creating socket...");
+        DatagramSocket sendSocket = new DatagramSocket();
+
+        InetAddress ip = InetAddress.getLocalHost();
+        int port = 10010;
+        byte buf[] = null;
+
+        buf = message.getBytes();
+
+        System.out.println("Making packet....");
+        DatagramPacket DpSend =
+                new DatagramPacket(buf, buf.length, ip, port);
+
+        System.out.println("Sending packet...");
+        sendSocket.send(DpSend);
+        sendSocket.close();
+
+        DatagramSocket receiveSocket = new DatagramSocket(10011, InetAddress.getLocalHost());
+        System.out.println("Ready to receive....");
+
+        byte[] receiveData;
+        ArrayList<String> fileString = new ArrayList<>();
+        boolean termination = false;
+
+        do {
+            receiveData = new byte[PACKETSIZE];
+            DatagramPacket receivePacket = new DatagramPacket(receiveData, receiveData.length);
+            receiveSocket.receive(receivePacket);
+
+            if (receiveData[0] == '\0') {
+                termination = true;
+                System.out.println("Bye!");
+                break;
+            }
+
+            int sequence = getInt(receiveData); // get the sequence number from the packet
+            if (sequence != SEQUENCE) {
+                // out of order -> discard
+                sendACK(sequence);
+                continue;
+            }
+
+            byte[] array = gremlin(0.1, 0.1, 0.1, 100, receiveData); // Adjust gremlin parameters as needed
+            if (array == null) {
+                // packet was lost
+                System.out.println("Packet lost on " + sequence);
+                continue;
+            }
+
+            boolean packetDamaged = errorDetection(array);
+            if (packetDamaged) {
+                // packet was damaged
+                sendNAK(sequence);
+            } else {
+                // store packet;
+            }
+
+            byte[] msgArray = Arrays.copyOfRange(array, HEADER, array.length);
+            fileString.add(new String(msgArray));
+
+            SEQUENCE++;
+            sendACK(SEQUENCE);
+
+        } while (!termination);
+
+        receiveSocket.close();
+        saveFile(fileString);
+    }
+
+    static byte[] gremlin(double damage, double lost, double delay, int delayTime, byte[] packet) {
+        Random rand = new Random();
+        int lostRand = rand.nextInt(100);
+
+        if (lostRand < lost * 100) {
+            return null;
+        }
+
+        int delayRand = rand.nextInt(100);
+        if (delayRand < delay * 100) {
+            try {
+                Thread.sleep(delayTime);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+
+        return packet;
+    }
+
+    static void sendACK(int expectedSequenceNumber) {
+        // Assuming you have IPAddress and port defined globally
+        String msg = "ACK" + expectedSequenceNumber;
+        byte[] packet = msg.getBytes();
+        DatagramPacket ackPacket = new DatagramPacket(packet, packet.length, IPAddress, port);
+        try {
+            // Assuming receiveSocket is defined globally
+            receiveSocket.send(ackPacket);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    static void sendNAK(int expectedSequenceNumber) {
+        String msg = "NAK" + expectedSequenceNumber;
+        byte[] packet = msg.getBytes();
+        DatagramPacket ackPacket = new DatagramPacket(packet, packet.length, IPAddress, port);
+        try {
+            receiveSocket.send(ackPacket);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    static boolean errorDetection(byte[] packet) {
+        // Assuming you have getServerChecksum and calculateChecksum methods defined
+        int checksumReceived = getServerChecksum(packet);
+        int checksumCalculated = calculateChecksum(packet);
+
+        return checksumCalculated != checksumReceived;
+    }
+
+    static int getInt(byte[] bytes) {
+        return ((bytes[0] & 0xFF) << 24) | ((bytes[1] & 0xFF) << 16) | ((bytes[2] & 0xFF) << 8) | (bytes[3] & 0xFF);
+    }
+
+    static void saveFile(ArrayList<String> fileString) {
+        // Implement file saving logic here
+    }
+}
