@@ -1,0 +1,197 @@
+import java.net.*;
+import java.util.Scanner;
+import java.util.Random;
+
+public class Server {
+
+    private static final int PORT = 7065;
+    private static final int PAYLOAD_SIZE = 512;
+    private static final int HEADER_SIZE = 20;
+    private static final int TIMEOUT = 100; // in milliseconds
+
+    private DatagramSocket socket;
+    private InetAddress clientAddress;
+    private int packetLossPercentage;
+    private Random random;
+
+    public Server() {
+        try {
+            socket = new DatagramSocket(PORT);
+            random = new Random();
+        } catch (SocketException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void configure() {
+        try {
+            // Use Scanner instead of System.console()
+            Scanner scanner = new Scanner(System.in);
+
+            System.out.println("Enter the packet loss percentage [0, 99]: ");
+            packetLossPercentage = scanner.nextInt();
+
+            System.out.println("Waiting for client connection...");
+            DatagramPacket initPacket = new DatagramPacket(new byte[0], 0);
+            socket.receive(initPacket);
+            clientAddress = initPacket.getAddress();
+            System.out.println("Client connected: " + clientAddress.getHostAddress());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void runSAW() {
+        try {
+            byte[] data = "Hello, SAW!".getBytes();
+
+            for (int seqNumber = 0; seqNumber < data.length; seqNumber++) {
+                DatagramPacket packet = createPacket(seqNumber, data[seqNumber]);
+                if (shouldSend()) {
+                    socket.send(packet);
+                }
+
+                // Receive acknowledgment
+                socket.setSoTimeout(TIMEOUT);
+                DatagramPacket ackPacket = new DatagramPacket(new byte[HEADER_SIZE], HEADER_SIZE);
+                try {
+                    socket.receive(ackPacket);
+                    int ackNumber = extractAckNumber(ackPacket.getData());
+                    if (ackNumber == seqNumber) {
+                        System.out.println("SAW: Packet " + seqNumber + " acknowledged.");
+                    }
+                } catch (SocketTimeoutException e) {
+                    System.out.println("SAW: Timeout for packet " + seqNumber + ". Retransmitting...");
+                    seqNumber--; // Retransmit the same packet
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private DatagramPacket createPacket(int seqNumber, byte payload) throws UnknownHostException {
+        byte[] header = createHeader(seqNumber);
+        byte[] packetData = new byte[HEADER_SIZE + 1]; // Header + Payload
+        System.arraycopy(header, 0, packetData, 0, HEADER_SIZE);
+        packetData[HEADER_SIZE] = payload; // Add payload at the end
+        return new DatagramPacket(packetData, packetData.length, clientAddress, PORT);
+    }
+
+    private byte[] createHeader(int seqNumber) {
+        byte[] header = new byte[HEADER_SIZE];
+        byte[] seqBytes = intToBytes(seqNumber);
+        System.arraycopy(seqBytes, 0, header, 0, seqBytes.length);
+        return header;
+    }
+
+    private int extractAckNumber(byte[] data) {
+        return bytesToInt(data);
+    }
+
+    private int bytesToInt(byte[] bytes) {
+        return ((bytes[0] & 0xFF) << 24) | ((bytes[1] & 0xFF) << 16) | ((bytes[2] & 0xFF) << 8) | (bytes[3] & 0xFF);
+    }
+
+    private byte[] intToBytes(int value) {
+        return new byte[]{(byte) (value >> 24), (byte) (value >> 16), (byte) (value >> 8), (byte) value};
+    }
+
+    private boolean shouldSend() {
+        int randomNumber = random.nextInt(100);
+        return randomNumber >= packetLossPercentage;
+    }
+
+    public static void main(String[] args) {
+        Server server = new Server();
+        server.configure();
+
+        // Example: Run SAW
+        new Thread(server::runSAW).start();
+    }
+}
+
+
+
+
+
+
+
+===========================================================================================
+
+
+import java.net.*;
+import java.io.*;
+import java.util.*;
+
+public class Client {
+    private DatagramSocket socket = null;
+    private ArrayList<Integer> a = new ArrayList<>();
+    private Scanner sc = new Scanner(System.in);
+
+    public Client(String address, int PORT) {
+        try {
+            socket = new DatagramSocket();
+            
+            InetAddress serverAddress = InetAddress.getByName(address);
+
+            // Send an empty packet to establish connection
+            DatagramPacket initPacket = new DatagramPacket(new byte[0], 0, serverAddress, PORT);
+            socket.send(initPacket);
+            
+            
+            byte[] buffer = new byte[512]; // adjust the size as needed
+            DatagramPacket receivePacket = new DatagramPacket(buffer, buffer.length);
+            socket.receive(receivePacket);
+
+            // Process the received data (e.g., print it)
+            String receivedData = new String(receivePacket.getData(), 0, receivePacket.getLength());
+            System.out.println(receivedData);
+
+            String line = "";
+
+            while (true) {
+                socket.receive(receivePacket);
+                line = new String(receivePacket.getData(), 0, receivePacket.getLength());
+                if (line.equals("Stop")) {
+                    System.out.println("Connection closed*************");
+                    break;
+                } else if (line.equals("Window start")) {
+                    a.clear();
+                    a.add(0);
+                    System.out.println("=============================");
+                    socket.receive(receivePacket);
+                    String num = new String(receivePacket.getData(), 0, receivePacket.getLength());
+                    while (!num.equals("Window end")) {
+                        a.add(Integer.parseInt(num));
+                        socket.receive(receivePacket);
+                        num = new String(receivePacket.getData(), 0, receivePacket.getLength());
+                    }
+                    Random r = new Random();
+                    int corr = a.get(r.nextInt(a.size()));
+                    for (int i = 1; i < a.size(); i++) {
+                        int sample = a.get(i).intValue();
+                        if (sample != corr)
+                            System.out.println("Frame " + sample + " received");
+                        else
+                            System.out.println("Frame " + sample + " got corrupted");
+                    }
+                    DatagramPacket ackPacket = new DatagramPacket(String.valueOf(corr).getBytes(), String.valueOf(corr).length(), receivePacket.getAddress(), receivePacket.getPort());
+                    socket.send(ackPacket);
+                    System.out.println("=============================");
+                }
+            }
+
+            socket.close();
+        } catch (ConnectException ce) {
+            System.out.println("Connection refused. Make sure the server is running.");
+        } catch (IOException i) {
+            i.printStackTrace();
+        }
+    }
+
+    public static void main(String args[]) {
+        Client client = new Client("127.0.0.1", 7065); // Use the same IP address and port as the server
+    }
+}
+
