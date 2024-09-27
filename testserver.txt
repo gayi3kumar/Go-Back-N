@@ -1,0 +1,166 @@
+import java.io.IOException;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.net.SocketTimeoutException;
+import java.util.HashMap;
+
+public class Server {
+    static int PACKETSIZE = 512;
+    static int SEQUENCE = 1;
+    static int CHECKSUM = 3;
+    static int HEADER = SEQUENCE + CHECKSUM;
+    static int DATASIZE = PACKETSIZE - HEADER;
+    static int WINDOWSIZE = 32;
+    static int realSequenceNumber = 0;
+    static InetAddress IPAddress;
+    static int port;
+    static HashMap<Integer, byte[]> packets;
+    static int totalNumberPacket;
+    static int highestAck;
+    static int group;
+
+    public static void main(String[] args) throws IOException {
+        try (DatagramSocket ds = new DatagramSocket(10010)) {
+            byte[] receive = new byte[PACKETSIZE];
+            System.out.println("Server listening....");
+            DatagramPacket requestPacket;
+
+            requestPacket = new DatagramPacket(receive, receive.length);
+            ds.receive(requestPacket);
+
+            String message_in_string = new String(receive);
+            if (message_in_string.startsWith("GET")) {
+                System.out.println("Client message: " + message_in_string);
+                IPAddress = requestPacket.getAddress();
+                port = requestPacket.getPort();
+                String fileName = getFileName(message_in_string);
+                byte[] httpResponse = generateHTTPResponse();
+                DatagramPacket sendResponse = new DatagramPacket(httpResponse, httpResponse.length, IPAddress, port);
+                ds.send(sendResponse);
+
+                sendFile(fileName);
+
+            } else {
+                System.out.println("Wrong command");
+            }
+        }
+    }
+
+    static String getFileName(String request) {
+        // Extract and return the filename from the GET request
+        // Implement this based on your specific GET request format
+        return "TestFile.html"; // Replace with actual implementation
+    }
+
+    static byte[] generateHTTPResponse() {
+        // Generate and return a simple HTTP response
+        String response = "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\nHello, this is a test file!";
+        return response.getBytes();
+    }
+
+    static void sendFile(String fileName) {
+        byte[] receiveData = new byte[PACKETSIZE];
+        highestAck = 1;
+        group = 0;
+        byte[] message = getContent(fileName);
+        packets = segmentPackets(message);
+        totalNumberPacket = packets.size();
+        int sequenceNum = 1;
+
+        do {
+            sequenceNum = moveWindow(sequenceNum);
+        } while (realSequenceNumber < totalNumberPacket);
+
+        terminationProcess();
+    }
+
+    static void terminationProcess() {
+        byte[] byeMessage = new byte[1];
+        DatagramPacket byePacket = new DatagramPacket(byeMessage, byeMessage.length, IPAddress, port);
+        try {
+            serverSocket.send(byePacket);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    static int moveWindow(int windowStart) {
+        int windowEnd = windowStart + WINDOWSIZE;
+        int sequenceNum = windowStart;
+
+        while (sequenceNum < windowEnd && realSequenceNumber <= totalNumberPacket) {
+            byte[] packet = packets.get(realSequenceNumber);
+            DatagramPacket sendPacket = new DatagramPacket(packet, packet.length, IPAddress, port);
+
+            try {
+                serverSocket.send(sendPacket);
+
+                sequenceNum++;
+                realSequenceNumber++;
+
+                byte[] receiveData = new byte[PACKETSIZE];
+                DatagramPacket receivePacket = new DatagramPacket(receiveData, receiveData.length);
+                serverSocket.receive(receivePacket);
+
+                String message = new String(receiveData);
+                int ackNum = extractAckNumber(message);
+
+                if (ackNum == 1) {
+                    highestAck = 1;
+                }
+                if (message.contains("ACK")) {
+                    if (ackNum > highestAck) {
+                        highestAck = ackNum;
+                    }
+                    if (ackNum == 64) {
+                        group++;
+                        highestAck = 1;
+                    }
+                } else if (message.contains("NAK")) {
+                    windowStart = ackNum;
+                    windowEnd = ackNum + WINDOWSIZE;
+                    cancelTime();
+                }
+
+                updateTimer();
+            } catch (SocketTimeoutException e) {
+                // Handle timeout exception
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+
+        return sequenceNum;
+    }
+
+    static int extractAckNumber(String message) {
+        // Extract and return the acknowledgment number from the message
+        // Implement this based on your acknowledgment message format
+        return Integer.parseInt(message.substring(indexBegin, indexEnd));
+    }
+
+    static void updateTimer() {
+        // Implement timer update logic
+    }
+
+    static void cancelTime() {
+        // Implement timer cancellation logic
+    }
+
+    static byte[] getContent(String fileName) {
+        // Implement logic to read the content of the file
+        // and return it as a byte array
+        return "File content goes here.".getBytes();
+    }
+
+    static HashMap<Integer, byte[]> segmentPackets(byte[] message) {
+        // Implement logic to segment the file content into packets
+        // and return a HashMap where the key is the sequence number and
+        // the value is the corresponding packet as a byte array
+        // You may want to consider adding sequence numbers to each packet
+        HashMap<Integer, byte[]> packets = new HashMap<>();
+        // Your implementation here
+        return packets;
+    }
+}
